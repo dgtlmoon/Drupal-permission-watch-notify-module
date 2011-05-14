@@ -1,0 +1,4 @@
+name = Permission Change Notification
+description = Send's an email with differences in permissions
+package = Other
+core = 6.x

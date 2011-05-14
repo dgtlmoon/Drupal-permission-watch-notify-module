@@ -1,0 +1,165 @@
+<?php
+
+function permission_watch_menu() {
+  
+  $items['admin/settings/permission_watch'] = 
+    array('title' => 'Permission Watch settings',
+    'description' => 'Settings for permission watch and alert',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('permission_watch_admin_settings'),
+    'access arguments' => array('administer site configuration'));
+  
+  return $items;
+}
+
+function permission_watch_admin_settings() {
+  
+  $form = array('#type' => 'form',
+  				'permission_watch_to_email' => 
+                  array('#type' => 'textfield',
+                  		'#title' => t('Email address to send the notification'),
+                  		'#default_value' => variable_get('permission_watch_to_email', false),
+                  		'#description' => t('Email address to send the alerts to'),
+                  		'#required' => true),
+
+                  'permission_watch_from_email' => 
+                   array('#type' => 'textfield',
+                   		'#title' => t('Email address to set as the From address'),
+                   		'#default_value' => variable_get('permission_watch_from_email', variable_get('site_mail', false)),
+                  		'#description' => t(''))
+                   );
+  
+  return system_settings_form($form);
+}
+
+function permission_watch_save_table($save = true) {
+  
+  $rows = array();
+  $query = db_query("SELECT r.name, p.* FROM {permission} p 
+                     LEFT JOIN {role} r on r.rid = p.rid");
+  
+  while ($row = db_fetch_array($query)) {
+    $rows[] = $row;
+  }
+  
+  if ($save) {
+    variable_set('permission_watch_save_table', $rows);
+  }
+  
+  return $rows;
+}
+
+function permission_watch_form_alter(&$form, $form_state, $form_id) {
+  
+  switch ($form_id) :
+    case 'user_admin_perm' :
+      // save a serialised copy of the permission table for comparison
+      $form['#submit'][] = 'permission_watch_submit';
+      // first time ran, so save a copy of the table
+      if (! $save_table = variable_get('permission_watch_save_table', false)) {
+        drupal_set_message('first time! saving copy of DB');
+        permission_watch_save_table();
+      }
+      break;
+  endswitch
+  ;
+}
+
+function permission_watch_compare() {
+  $old_table = variable_get('permission_watch_save_table', false);
+  $new_table = permission_watch_save_table(false);
+  $differences = array();
+  
+  // check and compare roles, key them first   
+  foreach ($old_table as $table) {
+    $old_roles[$table['name']] = $table['name'];
+  }
+  
+  foreach ($old_table as $table) {
+    $new_roles[$table['name']] = $table['name'];
+  }
+  
+  // do things in old_roles exist in new roles?
+  foreach ($old_roles as $key) {
+    if (! isset($new_roles[$key])) {
+      $differences[] = "Role $key no longer exists";
+    }
+  }
+  
+  // and the same if something in the new setup is not in the past  
+  foreach ($new_roles as $key) {
+    if (! isset($old_roles[$key])) {
+      $differences[] = "Role '{$key}' was added";
+    }
+  }
+  // flatten the tables out to something easily comparable
+  foreach ($new_table as $permission) {
+    foreach (explode(',', $permission['perm']) as $perm) {
+      $perm = trim($perm);
+      $new_table_flattened[] = trim($permission['name'].' :: '.$perm);
+    }
+  }
+  
+  foreach ($old_table as $permission) {
+    foreach (explode(',', $permission['perm']) as $perm) {
+      $perm = trim($perm);
+      $old_table_flattened[] = trim($permission['name'].' :: '.$perm);
+    }
+  }
+  
+  // what is in the old that is not in the new? (has been removed)
+  foreach ($old_table_flattened as $perm) {
+    if (! in_array($perm, $new_table_flattened)) {
+      $differences[] = "Removed permission -> ". $perm;
+    }
+  }
+  
+  // what is in the new that is not in the old? (has been added)
+  foreach ($new_table_flattened as $perm) {
+    if (! in_array($perm, $old_table_flattened)) {
+      $differences[] = "Added permission -> ". $perm;
+    }
+  }
+  
+  if (count($differences)) {
+    return $differences;
+  }
+  
+  return false;
+}
+
+function permission_watch_submit($form, &$form_state) {
+  global $user;
+  
+  if (variable_get('permission_watch_to_email', false)) {
+    if (variable_get('permission_watch_save_table', false)) {
+      drupal_set_message('Doing compare');
+      if ($differences = permission_watch_compare()) {
+        // something was detected, email report
+        $output = "A change to the permissions was detected, the form was submitted by {$user->name} \n";
+        $subject = $output;
+        $output .= "\n\n";
+        foreach ($differences as $difference) {
+          $output.= $difference."\n";
+        }
+        $params['report'] = $output;
+        drupal_mail('permission_watch', 'notice', variable_get('permission_watch_to_email', false), user_preferred_language($account), $params);
+      }
+      // now save this is a default to compare against
+      permission_watch_save_table();      
+    }    
+  }
+}
+
+
+function permission_watch_mail($key, &$message, $params) {
+  $language = $message['language'];
+  $variables = user_mail_tokens($params['report'], $language);
+  switch ($key) {
+    case 'notice':
+      $message['subject'] = t('Permission change notification from !site', $variables, $language->language);
+      $message['body'][] = $params['report'];
+      break;
+  }
+}
+
