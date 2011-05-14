@@ -57,7 +57,6 @@ function permission_watch_form_alter(&$form, $form_state, $form_id) {
       $form['#submit'][] = 'permission_watch_submit';
       // first time ran, so save a copy of the table
       if (! $save_table = variable_get('permission_watch_save_table', false)) {
-        drupal_set_message('first time! saving copy of DB');
         permission_watch_save_table();
       }
       break;
@@ -133,7 +132,6 @@ function permission_watch_submit($form, &$form_state) {
   
   if (variable_get('permission_watch_to_email', false)) {
     if (variable_get('permission_watch_save_table', false)) {
-      drupal_set_message('Doing compare');
       if ($differences = permission_watch_compare()) {
         // something was detected, email report
         $output = "A change to the permissions was detected, the form was submitted by {$user->name} \n";
